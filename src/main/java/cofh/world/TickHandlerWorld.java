@@ -1,6 +1,7 @@
 package cofh.world;
 
 import cofh.CoFHCore;
+import cofh.api.world.ISuspendedFeatureGeneration;
 import cofh.util.position.ChunkCoord;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent.Phase;
@@ -22,6 +23,7 @@ public class TickHandlerWorld {
 	public static TickHandlerWorld instance = new TickHandlerWorld();
 
 	public static TMap<Integer, ArrayDeque<RetroChunkCoord>> chunksToGen = new THashMap<Integer, ArrayDeque<RetroChunkCoord>>();
+	public static TMap<Integer, THashSet<ISuspendedFeatureGeneration>> suspendedGenerations = new THashMap<Integer, THashSet<ISuspendedFeatureGeneration>>();
 
 	@SubscribeEvent
 	public void tickEnd(WorldTickEvent event) {
@@ -31,7 +33,36 @@ public class TickHandlerWorld {
 		}
 		World world = event.world;
 		int dim = world.provider.dimensionId;
+		THashSet<ISuspendedFeatureGeneration> suspended = suspendedGenerations.get(Integer.valueOf(dim));
 		ArrayDeque<RetroChunkCoord> chunks = chunksToGen.get(Integer.valueOf(dim));
+
+		if (suspended != null && suspended.size() > 0) {
+			long worldSeed = world.getSeed();
+			Random rand = new Random(worldSeed);
+			long xSeed = rand.nextLong() >> 2 + 1L;
+			long zSeed = rand.nextLong() >> 2 + 1L;
+			ChunkCoord c = null;
+			ISuspendedFeatureGeneration gen = null;
+			for (ISuspendedFeatureGeneration g : suspended) {
+				for (ChunkCoord coord : g.getChunksToGen()) {
+					if (world.getChunkFromChunkCoords(coord.chunkX, coord.chunkZ).isChunkLoaded) {
+						c = coord;
+						gen = g;
+						suspended.remove(g);
+						break;
+					}
+				}
+				if (c != null) break;
+			}
+			if (c != null) {
+				rand.setSeed(xSeed * c.chunkX + zSeed * c.chunkZ ^ worldSeed);
+				gen.generateFeature(rand, c.chunkX, c.chunkZ, world, true);
+				if (gen.isCompleted()) {
+					suspended.remove(gen);
+					suspendedGenerations.put(dim, suspended);
+				}
+			}
+		}
 
 		if (chunks != null && chunks.size() > 0) {
 			RetroChunkCoord r = chunks.pollFirst();
